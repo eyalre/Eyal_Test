@@ -11,3 +11,14 @@ jobs:
 
       - name: Say Hello
         run: echo "Hello, World!"
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      - name: Notify scan completion
+        run: echo "CodeQL scan completed. View results in the Security tab on GitHub."
