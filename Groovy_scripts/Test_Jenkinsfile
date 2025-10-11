@@ -1,0 +1,35 @@
+// Jenkinsfile
+pipeline {
+    agent any
+
+    stages {
+        stage('Checkout') {
+            steps {
+                // Assuming your Python script is in the same repository
+                // or a known location on the agent
+                script {
+                    echo "Checking out code..."
+                    // Example for a Git repository
+                    // git url: 'your_repository_url', branch: 'main'
+                }
+            }
+        }
+
+        stage('Execute Python Script') {
+            steps {
+                script {
+                    echo "Executing Python script..."
+                    // Execute the Python script directly
+                    sh 'python my_script.py "Jenkins User"'
+
+                    // You can also capture the output
+                    def pythonOutput = sh(script: 'python my_script.py "Pipeline"', returnStdout: true).trim()
+                    echo "Python script output: ${pythonOutput}"
+
+                    // Example of executing a more complex script via a shell script
+                    // sh './run_my_python_script.sh'
+                }
+            }
+        }
+    }
+}
