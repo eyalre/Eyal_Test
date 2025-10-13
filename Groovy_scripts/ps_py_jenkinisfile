@@ -1,0 +1,49 @@
+pipeline {
+    agent { label 'windows' }
+
+    stages {
+        stage('Fetch from CyberArk and Run Python') {
+            steps {
+                powershell '''
+                    # --- CyberArk config ---
+                    $AppID   = "jenkins-win"
+                    $Safe    = "AppPasswords"
+                    $Object  = "svc-jenkins-db"
+                    $CCP_URL = "https://cyberark.company.com/AIMWebService/api/Accounts"
+
+                    $uri = "$CCP_URL?AppID=$AppID&Safe=$Safe&Object=$Object"
+
+                    try {
+                        # --- Retrieve credentials ---
+                        $response = Invoke-RestMethod -Method GET -Uri $uri -UseBasicParsing
+
+                        if (-not $response.Content) {
+                            throw "No password returned by CyberArk."
+                        }
+
+                        $env:APP_USER = $response.UserName
+                        $env:APP_PASS = $response.Content
+
+                        Write-Host "Fetched credentials for $($env:APP_USER). Running Python script..."
+
+                        # --- Run Python script (using env vars) ---
+                        python "C:\\jenkins\\workspace\\myjob\\scripts\\consume_env_secret.py"
+
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Python exited with code $LASTEXITCODE"
+                        }
+
+                    } catch {
+                        Write-Error "Failed to fetch or use CyberArk credential: $_"
+                        exit 1
+                    } finally {
+                        # --- Cleanup environment ---
+                        Remove-Item Env:APP_USER -ErrorAction SilentlyContinue
+                        Remove-Item Env:APP_PASS -ErrorAction SilentlyContinue
+                        Remove-Variable response -ErrorAction SilentlyContinue
+                    }
+                '''
+            }
+        }
+    }
+}

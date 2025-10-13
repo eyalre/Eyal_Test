@@ -1,0 +1,50 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Get Credentials from CyberArk') {
+            steps {
+                powershell '''
+                    # --- Configuration ---
+                    $AppID   = "jenkins-win"
+                    $Safe    = "AppPasswords"
+                    $Object  = "svc-jenkins-db"
+                    $CCP_URL = "https://cyberark.company.com/AIMWebService/api/Accounts"
+
+                    # --- Build request ---
+                    $uri = "$CCP_URL?AppID=$AppID&Safe=$Safe&Object=$Object"
+
+                    try {
+                        # --- Retrieve credentials from CyberArk ---
+                        $response = Invoke-RestMethod -Method GET -Uri $uri -UseBasicParsing
+
+                        if (-not $response.Content) {
+                            throw "No password found in response."
+                        }
+
+                        $username = $response.UserName
+                        $password = $response.Content
+
+                        Write-Host "Successfully fetched credentials for $username."
+
+                        # Example: use password in another command
+                        # e.g., connect to database, login to API, run Python script, etc.
+                        # For demo, we’ll just run a simple masked command:
+                        $securePwd = ConvertTo-SecureString $password -AsPlainText -Force
+                        $cred = New-Object System.Management.Automation.PSCredential ($username, $securePwd)
+
+                        # Example: run a command that accepts credentials
+                        # (Replace with your actual command)
+                        Write-Host "Running secure operation for $($cred.UserName)..."
+                        # Example: python script
+                        # python my_script.py --user $($cred.UserName) --pass $password
+
+                    } catch {
+                        Write-Error "CyberArk credential retrieval failed: $_"
+                        exit 1
+                    }
+                '''
+            }
+        }
+    }
+}
