@@ -1,0 +1,61 @@
+pipeline {
+    agent { label 'windows' }  // or 'any' if using Linux
+
+    stages {
+        stage('Retrieve Secret and Run Python') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'cyberark-api-user',
+                    usernameVariable: 'CYB_USER',
+                    passwordVariable: 'CYB_PASS'
+                )]) {
+                    powershell '''
+                        try {
+                            # === Build CyberArk URL ===
+                            $AppID = "jenkins-win"
+                            $Safe  = "AppPasswords"
+                            $Object = "svc-jenkins-db"
+                            $CCP_URL = "https://cyberark.company.com/AIMWebService/api/Accounts"
+                            $uri = "$CCP_URL?AppID=$AppID&Safe=$Safe&Object=$Object"
+
+                            # === Prepare Basic Auth Header using Jenkins credentials ===
+                            $authString = "$env:CYB_USER`:$env:CYB_PASS"
+                            $base64Auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($authString))
+                            $headers = @{ Authorization = "Basic $base64Auth" }
+
+                            Write-Host "Calling CyberArk API for $Object..."
+
+                            # === Call CyberArk REST API ===
+                            $response = Invoke-RestMethod -Uri $uri -Headers $headers -UseBasicParsing
+
+                            if (-not $response.Content) {
+                                throw "No secret content returned from CyberArk"
+                            }
+
+                            # === Pass secret to Python script via environment variables ===
+                            $env:APP_USER = $response.UserName
+                            $env:APP_PASS = $response.Content
+
+                            Write-Host "Running Python ETL script as $($env:APP_USER)..."
+
+                            python "C:\\jenkins\\workspace\\myjob\\scripts\\etl.py"
+
+                            if ($LASTEXITCODE -ne 0) {
+                                throw "Python script failed with code $LASTEXITCODE"
+                            }
+
+                        } catch {
+                            Write-Error "Pipeline failed: $_"
+                            exit 1
+                        } finally {
+                            # === Cleanup secrets ===
+                            Remove-Item Env:APP_USER -ErrorAction SilentlyContinue
+                            Remove-Item Env:APP_PASS -ErrorAction SilentlyContinue
+                            Write-Host "Secrets cleared from environment."
+                        }
+                    '''
+                }
+            }
+        }
+    }
+}
