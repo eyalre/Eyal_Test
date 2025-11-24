@@ -1,0 +1,103 @@
+pipeline {
+    agent {
+        kubernetes {
+            label 'jenkins-docker-agent'
+            defaultContainer 'jnlp'
+            yaml """
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: docker-agent
+spec:
+  containers:
+  - name: docker
+    image: docker:24.0.5-dind
+    securityContext:
+      privileged: true
+    tty: true
+    volumeMounts:
+    - name: dind-storage
+      mountPath: /var/lib/docker
+  - name: jenkins-agent
+    image: jenkins/inbound-agent:latest
+    args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
+  volumes:
+  - name: dind-storage
+    emptyDir: {}
+"""
+        }
+    }
+
+    environment {
+        REGISTRY = 'mydockerhubuser/myapp'
+        REGISTRY_CREDENTIALS = 'dockerhub-credentials'  // Jenkins credentials ID
+        IMAGE_TAG = "${env.BUILD_NUMBER}"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                container('docker') {
+                    sh '''
+                      docker build -t $REGISTRY:$IMAGE_TAG .
+                      docker tag $REGISTRY:$IMAGE_TAG $REGISTRY:latest
+                    '''
+                }
+            }
+        }
+
+        stage('Run Tests') {
+            steps {
+                container('docker') {
+                    sh '''
+                      docker run --rm $REGISTRY:$IMAGE_TAG pytest tests/ || exit 1
+                    '''
+                }
+            }
+        }
+
+        stage('Push to Registry') {
+            steps {
+                container('docker') {
+                    withCredentials([usernamePassword(credentialsId: "${env.REGISTRY_CREDENTIALS}", usernameVariable: 'USER', passwordVariable: 'PASS')]) {
+                        sh '''
+                          echo "$PASS" | docker login -u "$USER" --password-stdin
+                          docker push $REGISTRY:$IMAGE_TAG
+                          docker push $REGISTRY:latest
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to CaaS') {
+            steps {
+                echo "Deploying image $REGISTRY:$IMAGE_TAG to Kubernetes..."
+                // Example deployment command:
+                sh '''
+                  kubectl set image deployment/myapp myapp=$REGISTRY:$IMAGE_TAG -n production --record
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Cleaning up Docker environment...'
+            sh 'docker system prune -af || true'
+        }
+        success {
+            echo "✅ Build #${env.BUILD_NUMBER} successfully pushed and deployed!"
+        }
+        failure {
+            echo "❌ Build failed. Check logs for details."
+        }
+    }
+}

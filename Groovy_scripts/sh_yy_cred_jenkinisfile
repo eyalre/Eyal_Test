@@ -1,0 +1,68 @@
+pipeline {
+    agent { label 'linux' }
+
+    stages {
+        stage('Run Python ETL with CyberArk') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'cyberark-api-cred',
+                    usernameVariable: 'CYB_USER',
+                    passwordVariable: 'CYB_PASS'
+                )]) {
+                    sh '''
+                        set -e  # stop on first error
+                        echo "=== Building CyberArk API request ==="
+
+                        # CyberArk connection details
+                        AppID="jenkins-linux"
+                        Safe="AppPasswords"
+                        Object="svc-jenkins-db"
+                        CCP_URL="https://cyberark.company.com/AIMWebService/api/Accounts"
+
+                        uri="${CCP_URL}?AppID=${AppID}&Safe=${Safe}&Object=${Object}"
+
+                        echo "Calling CyberArk API for $Object..."
+
+                        # Create Basic Auth header
+                        authString="${CYB_USER}:${CYB_PASS}"
+                        base64Auth=$(echo -n "$authString" | base64)
+
+                        # Call CyberArk REST API (JSON response)
+                        response=$(curl -s -H "Authorization: Basic $base64Auth" "$uri")
+
+                        # Extract JSON fields (requires jq)
+                        APP_USER=$(echo "$response" | jq -r '.UserName')
+                        APP_PASS=$(echo "$response" | jq -r '.Content')
+
+                        if [ -z "$APP_PASS" ] || [ "$APP_PASS" = "null" ]; then
+                            echo "ERROR: No secret returned from CyberArk" >&2
+                            exit 1
+                        fi
+
+                        echo "Successfully retrieved secret for $APP_USER"
+
+                        # Export credentials for Python
+                        export APP_USER
+                        export APP_PASS
+
+                        echo "Running Python ETL script..."
+                        python3 scripts/weather_etl.py
+
+                        status=$?
+                        if [ $status -ne 0 ]; then
+                            echo "Python script failed with exit code $status" >&2
+                            exit $status
+                        fi
+
+                        echo "ETL completed successfully."
+
+                        # Clean up sensitive env vars
+                        unset APP_USER
+                        unset APP_PASS
+                        echo "Secrets cleared from environment."
+                    '''
+                }
+            }
+        }
+    }
+}
